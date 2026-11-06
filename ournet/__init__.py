@@ -1,1 +1,3 @@
-from .model import ConvNeXt_OccHeadv6
+from .model import OurNet
+
+__all__ = ["OurNet"]

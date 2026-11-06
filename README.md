@@ -1,73 +1,104 @@
+<div align="center">
+
 # OurNet
 
-**Occlusion urban road extraction network: From global urban high-resolution benchmark dataset to guided generation method**
+**Occlusion urban road extraction network**<br>
+From global urban high-resolution benchmark dataset to guided generation method
 
-This repository contains the final **ConvNeXt_OccHeadv6** implementation for occlusion-aware road extraction. Baselines, ablations, datasets, experiment outputs and pretrained weights are excluded.
+[Setup](#setup) · [Features](#extract-stable-diffusion-features) · [Training](#training) · [Inference](#inference) · [Weights](#pretrained-weights) · [RSIDEA](http://rsidea.whu.edu.cn/)
 
-![OurNet architecture](docs/assets/architecture.png)
+<img src="docs/assets/sydney-results.png" alt="OurNet large-scale road extraction in Sydney" width="100%">
 
-The model takes an RGB patch and an aligned precomputed diffusion feature. It predicts road/occlusion classes, complete roads and a boundary response. The diffusion feature extractor is **not included**: this release exposes its input interface, rather than providing an RGB-only end-to-end pipeline.
+**Sydney: large-scale road extraction.** Yellow: visible roads · Red: road occlusions.
 
-## Environment
+</div>
 
-Validated locally with Python 3.9. Python 3.9 is recommended for the pinned environment. Install a PyTorch/torchvision pair suitable for your CUDA runtime, then the remaining packages:
+OurNet combines semantic road extraction with diffusion-guided completion to recover roads hidden by buildings, trees, and other obstacles.
+
+<p align="center">
+  <img src="docs/assets/architecture.png" alt="OurNet architecture" width="850">
+</p>
+
+## Setup
+
+Python 3.9 and a CUDA-compatible PyTorch installation are recommended.
 
 ```bash
+git clone https://github.com/WanderRainy/OurNet.git
+cd OurNet
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+pip install -r requirements.txt
 ```
 
-`requirements.txt` pins the versions used for local validation. CUDA is recommended for training. CPU inference is available with `--device cpu`. MMSegmentation, MMCV and MMEngine are not required.
+## Extract Stable Diffusion Features
 
-## Data interface
+Clone [DIFT](https://github.com/Tsingularity/dift) into `dift/` and install its extraction environment. Place the separately supplied OurNet-specific `dift_sd.py` and `extract_dift_amodal.py` under `dift/`, then replace the upstream implementation:
 
-Prepare a JSONL manifest with one sample per line. All paths are relative to the manifest (absolute paths also work):
+```bash
+git clone https://github.com/Tsingularity/dift.git dift
+cp dift/dift_sd.py dift/src/models/dift_sd.py
+```
+
+Fill in the model, image, and output paths in `dift/extract_dift_amodal.py`, then run:
+
+```bash
+python dift/extract_dift_amodal.py
+```
+
+The customized extraction scripts are not bundled here. Use the original extraction settings (`t=181`, `up_ft_index=0`); each 512×512 image requires an aligned `[1280,16,16]` feature tensor saved as `.pt`.
+
+## Data
+
+Create a JSONL manifest with one sample per line; paths are relative to the manifest:
 
 ```json
 {"image":"images/example.png","label":"labels/example.png","feature":"features/example.pt"}
 ```
 
-- **Image:** RGB image, resized to 512×512, normalized as `pixel / 127.5 - 1`.
-- **Label:** single-channel or palette PNG with integer class IDs. Nearest-neighbor resizing preserves IDs. Three classes: `0` background, `1` visible road, `2` occluded road. Five classes: `0` background, `1` visible road, `2–4` occlusion subtypes; retain the source dataset's subtype mapping.
-- **Feature:** PyTorch float tensor of shape `[1280,16,16]` (or `[1,1280,16,16]`) saved with `torch.save`. The feature must correspond to the same resized image, without independent geometric augmentation. The original cache uses `t_181_up-ft-index_0`; only index 0 is consumed by the final network. Other feature scales need not be loaded.
+Use RGB images, integer class-ID labels, and aligned diffusion features. Images and labels are resized to 512×512.
 
-No images, labels or cached features are shipped. The feature extraction model, prompt and preprocessing must match those used to build the original cache; arbitrary tensors of the same size do not reproduce the paper.
+- **OurSet-2:** 3 classes — background, visible road, occluded road.
+- **OurSet-4:** 5 classes — background, visible road, and three occlusion subtypes, using the dataset's original class IDs.
 
 ## Training
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python train.py \
   --manifest data/train.jsonl --output outputs/ournet \
-  --num-classes 3 --epochs 100 --batch-size 8 --seed 197 \
-  --backbone-weights checkpoints/convnext_base_22k_224.pth
+  --backbone-weights checkpoints/convnext_base_22k_224.pth \
+  --num-classes 3 --epochs 100 --batch-size 8
 ```
 
-For five classes, use `--num-classes 5`. The optional backbone checkpoint is loaded from its `model` entry (or a plain state dict). Without it, training starts with random initialization. Paper-compatible initialization uses ConvNeXt-Base ImageNet-22K weights. Training uses Adam with learning rate `2e-4`, divided by five at 50%, 70% and 85% of the run. The final checkpoint is saved as `outputs/ournet/final.pth`; configuration and per-epoch losses are saved alongside it. This entry point uses one device; batch size is the total batch size on that device.
+Use `--num-classes 5` for OurSet-4. Training saves the final checkpoint and logs in the output directory. The backbone initialization file is optional; omitting it trains from scratch.
 
-The loss combines multiclass cross-entropy/Dice, complete-road BCE/Dice, and L1 boundary supervision. **Important reproducibility detail:** the supplied final source data loader sets `dist_maps=0.0`, with distance-map generation commented out. This release preserves that zero target instead of silently inventing a boundary target. The loss's hardcoded five-class Dice setting is corrected to use the requested class count, and binary Dice has a small numerical safeguard. Thus this is a cleaned implementation, not a claim of exact retraining of published metrics. Actual boundary-distance supervision must be resolved against the original experiment configuration before claiming paper-equivalent retraining.
+## Pretrained weights
+
+| Dataset | Classes | Download |
+| :--- | :---: | :--- |
+| OurSet-2 | 3 | [OurNet_OurSet2.pth](https://github.com/WanderRainy/OurNet/releases/download/weights-v1/OurNet_OurSet2.pth) |
+| OurSet-4 | 5 | [OurNet_OurSet4.pth](https://github.com/WanderRainy/OurNet/releases/download/weights-v1/OurNet_OurSet4.pth) |
+
+Download the matching weight file into `checkpoints/`.
 
 ## Inference
 
 ```bash
-python infer.py --image data/images/example.png \
+python infer.py \
+  --image data/images/example.png \
   --feature data/features/example.pt \
-  --checkpoint checkpoints/ConvNeXt_OccHeadv6_Occ2_100.th \
+  --checkpoint checkpoints/OurNet_OurSet2.pth \
   --num-classes 3 --output outputs/example
 ```
 
-The loader accepts original DataParallel checkpoints (`module.` prefixes), plain state dicts, and the new training checkpoint format. Class count must match the checkpoint. Full-model checkpoint loading is strict and does not download or require a separate backbone checkpoint.
+Outputs: `classes.png` (class IDs), `roads.png` (complete-road mask), and `boundary.npy` (boundary response). Use `--device cpu` for CPU inference. Large-image tiling and stitching are handled separately.
 
-Outputs (512×512 patch coordinates):
+## Acknowledgments
 
-- `classes.png`: integer class IDs.
-- `roads.png`: complete-road binary mask (0/255), combining non-background class predictions with the binary road head, as in the original evaluation.
-- `boundary.npy`: floating-point boundary-head response.
+Built on [ConvNeXt](https://github.com/facebookresearch/ConvNeXt) and [DIFT](https://github.com/Tsingularity/dift). See [THIRD_PARTY.md](THIRD_PARTY.md) and [LICENSE-ConvNeXt](LICENSE-ConvNeXt).
 
-Large georeferenced raster tiling/stitching and diffusion-feature generation are outside this release. Input georeferencing is not propagated to PNG outputs. Trained weights are not bundled in Git.
+## © Copyright & Usage
 
-## Implementation provenance
-
-The final model is extracted from `ConvNeXt_OccHeadv6`; its parameter names and tensor operations are retained for compatibility with the final experiment checkpoints. Local absolute paths, unused model imports and automatic backbone loading are removed. Input size remains 512×512, matching the original fixed-size heads.
-
-The architecture figure was extracted from the author-provided manuscript. The ConvNeXt backbone is derived from Meta's ConvNeXt; its MIT notice is preserved in [LICENSE-ConvNeXt](LICENSE-ConvNeXt). See [THIRD_PARTY.md](THIRD_PARTY.md). This repository does not grant rights to external model weights or datasets.
+This method is copyrighted by the Intelligent Remote Sensing Data Extraction, Analysis and Application Research Group (RSIDEA)
+http://rsidea.whu.edu.cn/
+affiliated with the State Key Laboratory of Information Engineering in Surveying, Mapping and Remote Sensing (LIESMARS), Wuhan University.

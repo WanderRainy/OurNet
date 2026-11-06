@@ -31,10 +31,10 @@ class DecoderBlock(nn.Module):
         x = self.relu3(x)
         return x
 
-class Dblock_more_dilate(nn.Module):
+class RelationGuidedModule(nn.Module):
 
     def __init__(self, channel):
-        super(Dblock_more_dilate, self).__init__()
+        super(RelationGuidedModule, self).__init__()
         self.dilate1 = nn.Conv2d(1024 + 256, channel, kernel_size=3, dilation=1, padding=1)
         self.dilate2 = nn.Conv2d(channel, channel, kernel_size=3, dilation=2, padding=2)
         self.dilate3 = nn.Conv2d(channel, channel, kernel_size=3, dilation=4, padding=4)
@@ -50,10 +50,14 @@ class Dblock_more_dilate(nn.Module):
         out = x[:, :1024, :] + dilate1_out + dilate2_out + dilate3_out
         return out
 
-class ConvNeXt_OccHeadv6(nn.Module):
+class OurNet(nn.Module):
+    """OurNet with a ConvNeXt-Base semantic encoder and diffusion guidance.
+
+    Legacy attribute names are retained for strict checkpoint compatibility.
+    """
 
     def __init__(self, num_classes=3, backbone_weights=None):
-        super(ConvNeXt_OccHeadv6, self).__init__()
+        super(OurNet, self).__init__()
         self.num_classes = num_classes
         filters = [128, 256, 512, 1024]
         self.backboon = ConvNeXt()
@@ -79,14 +83,13 @@ class ConvNeXt_OccHeadv6(nn.Module):
         self.wofinalrelu2 = nonlinearity
         self.roadwo_head = nn.Conv2d(32, 2, kernel_size=2, padding=1)
         self.reduce_dim_0 = nn.Sequential(nn.Conv2d(1280, 256, kernel_size=1), nn.BatchNorm2d(256), nn.ReLU(inplace=True))
-        self.d_module = Dblock_more_dilate(1024)
+        self.d_module = RelationGuidedModule(1024)
 
     def forward(self, x_dict):
         x = x_dict['img']
         if x.shape[1:] != (3, 512, 512):
             raise ValueError('Expected RGB images of shape [B, 3, 512, 512]')
         img_sdpt = x_dict['img_sdpt']
-        '\n        img_sdpt shape\n        [0]:1280,16,16\n        [1]:1280,32,32\n        [2]:640,64,64\n        [3]:320,64,64\n        [4]:320,32,32\n        '
         x4 = self.backboon(x)
         e4 = x4[3]
         e3 = x4[2]

@@ -2,10 +2,10 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-class dice_bce_loss(nn.Module):
+class DiceBCELoss(nn.Module):
 
     def __init__(self, batch=True, num_classes=1):
-        super(dice_bce_loss, self).__init__()
+        super(DiceBCELoss, self).__init__()
         self.batch = batch
         self.bce_loss = nn.BCELoss()
 
@@ -26,15 +26,15 @@ class dice_bce_loss(nn.Module):
         loss = 1 - self.soft_dice_coeff(y_true, y_pred)
         return loss
 
-    def __call__(self, y_pred, y_true):
+    def forward(self, y_pred, y_true):
         a = self.bce_loss(y_pred, y_true)
         b = self.soft_dice_loss(y_true, y_pred)
         return a + b
 
-class dice_ce_loss(nn.Module):
+class DiceCELoss(nn.Module):
 
     def __init__(self, batch=True, num_classes=3):
-        super(dice_ce_loss, self).__init__()
+        super(DiceCELoss, self).__init__()
         self.batch = batch
         self.num_classes = num_classes
         self.ce_loss = nn.CrossEntropyLoss()
@@ -45,7 +45,7 @@ class dice_ce_loss(nn.Module):
         return y_true_one_hot
 
     def soft_dice_coeff(self, y_true, y_pred):
-        smooth = 1e-601
+        smooth = 1e-3
         if self.batch:
             intersection = torch.sum(y_true * y_pred, dim=(0, 2, 3))
             i = torch.sum(y_true, dim=(0, 2, 3))
@@ -68,19 +68,26 @@ class dice_ce_loss(nn.Module):
         dice_loss = self.soft_dice_loss(y_true_one_hot, y_pred_softmax)
         return ce_loss + dice_loss
 
-class B2B1E1Loss(nn.Module):
+class BDLoss(nn.Module):
+    """L1 supervision against the Gaussian-weighted ground-truth boundary map."""
+
+    def forward(self, prediction, target):
+        if prediction.shape != target.shape:
+            raise ValueError("Boundary prediction and target must have identical shapes")
+        return F.l1_loss(prediction.float(), target.float())
+
+
+class OurNetLoss(nn.Module):
 
     def __init__(self, batch=True, num_classes=5):
-        super(B2B1E1Loss, self).__init__()
-        self.B2Loss = dice_ce_loss(num_classes=num_classes)
-        self.B1Loss = dice_bce_loss()
-        self.l1loss = nn.L1Loss()
+        super(OurNetLoss, self).__init__()
+        self.B2Loss = DiceCELoss(num_classes=num_classes)
+        self.B1Loss = DiceBCELoss()
+        self.boundary_loss = BDLoss()
 
     def forward(self, y_pred, y_true):
         b2loss = self.B2Loss(y_pred['roadocc_masks'], y_true['label'])
-        pc = y_pred['roadwo_edge_masks'].type(torch.float32)
-        dc = y_true['dist_maps'].type(torch.float32)
-        edgeloss = self.l1loss(pc, dc)
+        edgeloss = self.boundary_loss(y_pred['roadwo_edge_masks'], y_true['dist_maps'])
         roadwo_mask_true = (y_true['label'] >= 1).float()
         b1loss = self.B1Loss(y_pred['roadwo_masks'], roadwo_mask_true)
         return b2loss + b1loss + edgeloss

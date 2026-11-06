@@ -6,9 +6,9 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from ournet import ConvNeXt_OccHeadv6
+from ournet import OurNet
 from ournet.data import RoadDataset
-from ournet.loss import B2B1E1Loss
+from ournet.loss import OurNetLoss
 
 
 def main():
@@ -21,6 +21,7 @@ def main():
     p.add_argument('--batch-size', type=int, default=8)
     p.add_argument('--workers', type=int, default=8)
     p.add_argument('--lr', type=float, default=2e-4)
+    p.add_argument('--boundary-sigma', type=float, default=3.0, help='Gaussian boundary decay in pixels')
     p.add_argument('--seed', type=int, default=197)
     p.add_argument('--device', default='cuda')
     a = p.parse_args()
@@ -29,11 +30,11 @@ def main():
     if torch.cuda.is_available(): torch.cuda.manual_seed_all(a.seed)
     output = Path(a.output); output.mkdir(parents=True, exist_ok=True)
     if (output/'final.pth').exists(): raise FileExistsError('Use a new output directory')
-    dataset = RoadDataset(a.manifest, a.num_classes)
+    dataset = RoadDataset(a.manifest, a.num_classes, a.boundary_sigma)
     loader = DataLoader(dataset, batch_size=a.batch_size, shuffle=True, num_workers=a.workers)
-    model = ConvNeXt_OccHeadv6(a.num_classes, a.backbone_weights).to(a.device)
+    model = OurNet(a.num_classes, a.backbone_weights).to(a.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=a.lr)
-    criterion = B2B1E1Loss(num_classes=a.num_classes)
+    criterion = OurNetLoss(num_classes=a.num_classes)
     (output/'config.json').write_text(json.dumps(vars(a), indent=2))
     for epoch in range(1, a.epochs+1):
         model.train(); total = 0.

@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 import torch
-from ournet import ConvNeXt_OccHeadv6
+from ournet import OurNet
 from ournet.data import load_image, load_feature
 from ournet.checkpoint import load_weights
 
@@ -18,7 +18,7 @@ def main():
     p.add_argument('--num-classes', type=int, choices=(3, 5), default=3)
     p.add_argument('--device', default='cuda')
     a = p.parse_args()
-    model = ConvNeXt_OccHeadv6(a.num_classes)
+    model = OurNet(a.num_classes)
     load_weights(model, a.checkpoint)
     model.to(a.device).eval()
     inputs = {'img': load_image(a.image).unsqueeze(0).to(a.device),
